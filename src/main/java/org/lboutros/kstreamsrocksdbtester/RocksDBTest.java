@@ -3,6 +3,8 @@ package org.lboutros.kstreamsrocksdbtester;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.configuration2.ex.ConfigurationException;
 import org.apache.kafka.clients.producer.MockProducer;
+import org.apache.kafka.common.metrics.JmxReporter;
+import org.apache.kafka.common.metrics.Metrics;
 import org.apache.kafka.common.serialization.Serde;
 import org.apache.kafka.common.serialization.Serdes;
 import org.apache.kafka.common.utils.SystemTime;
@@ -35,7 +37,11 @@ class RocksDBTest implements Closeable {
 
     private final TopologyTestDriver testDriver;
 
-    private final MockProducer producer;
+    private MockProducer<String, String> producer;
+
+    private StreamsMetricsImpl streamsMetrics;
+
+    private Metrics metrics;
 
     private final ScheduledExecutorService rocksDBMetricsRecordingService;
 
@@ -43,6 +49,8 @@ class RocksDBTest implements Closeable {
 
     private long totalTime = 0;
     private long prefixScanCount = 0;
+
+    private final JmxReporter jmxReporter;
 
     public RocksDBTest() throws javax.naming.ConfigurationException, ConfigurationException, IllegalAccessException, NoSuchFieldException {
         Properties streamsConfiguration = readConfiguration("test.properties");
@@ -60,25 +68,11 @@ class RocksDBTest implements Closeable {
             return thread;
         });
 
-        // Don't do that alone at home, this can be dangerous :p
-        // TODO: put this ugly code in a dedicated function
-        Field producerPrivateField = TopologyTestDriver.class.getDeclaredField("producer");
-        producerPrivateField.setAccessible(true);
-        producer = (MockProducer) producerPrivateField.get(testDriver);
+        jmxReporter = new JmxReporter();
 
-        Field streamsMetricsPrivateField = MeteredKeyValueStore.class.getDeclaredField("streamsMetrics");
-        streamsMetricsPrivateField.setAccessible(true);
-        StreamsMetricsImpl streamsMetrics = (StreamsMetricsImpl) streamsMetricsPrivateField.get(stateStore);
+        exposeAndGetTestDriverFields();
 
-        Field timePrivateField = TopologyTestDriver.class.getDeclaredField("mockWallClockTime");
-        timePrivateField.setAccessible(true);
-
-        var lookup = MethodHandles.privateLookupIn(Field.class, MethodHandles.lookup());
-        VarHandle modifiers = lookup.findVarHandle(Field.class, "modifiers", int.class);
-        // make field non-final
-        modifiers.set(timePrivateField, timePrivateField.getModifiers() & ~Modifier.FINAL);
-        timePrivateField.set(testDriver, new SystemTime());
-        // End of ugly reflection code
+        metrics.addReporter(jmxReporter);
 
         final long recordingDelay = 0;
         final long recordingInterval = 1;
@@ -91,10 +85,36 @@ class RocksDBTest implements Closeable {
         );
     }
 
+    @SuppressWarnings("unchecked")
+    private void exposeAndGetTestDriverFields() throws NoSuchFieldException, IllegalAccessException {
+        // Don't do that alone at home, this can be dangerous :p
+        Field producerPrivateField = TopologyTestDriver.class.getDeclaredField("producer");
+        producerPrivateField.setAccessible(true);
+        producer = (MockProducer<String, String>) producerPrivateField.get(testDriver);
+
+        Field streamsMetricsPrivateField = MeteredKeyValueStore.class.getDeclaredField("streamsMetrics");
+        streamsMetricsPrivateField.setAccessible(true);
+        streamsMetrics = (StreamsMetricsImpl) streamsMetricsPrivateField.get(stateStore);
+
+        Field streamMetricsPrivateField = StreamsMetricsImpl.class.getDeclaredField("metrics");
+        streamMetricsPrivateField.setAccessible(true);
+        metrics = (Metrics) streamMetricsPrivateField.get(streamsMetrics);
+
+        Field timePrivateField = TopologyTestDriver.class.getDeclaredField("mockWallClockTime");
+        timePrivateField.setAccessible(true);
+
+        var lookup = MethodHandles.privateLookupIn(Field.class, MethodHandles.lookup());
+        VarHandle modifiers = lookup.findVarHandle(Field.class, "modifiers", int.class);
+        // make field non-final
+        modifiers.set(timePrivateField, timePrivateField.getModifiers() & ~Modifier.FINAL);
+        timePrivateField.set(testDriver, new SystemTime());
+    }
+
     @Override
     public void close() {
         testDriver.close();
         rocksDBMetricsRecordingService.shutdown();
+        jmxReporter.close();
     }
 
     private String generateKey() {
@@ -112,7 +132,7 @@ class RocksDBTest implements Closeable {
         try (Serde<String> serde = Serdes.String()) {
             // Insert entries in the state
             // TODO: should be configurable
-            for (int i = 0; i < 2_000_000; i++) {
+            for (int i = 0; i < 200_000_000; i++) {
                 // TODO: should be configurable
                 stateStore.put(generateKey(), generateDummyData(100));
 

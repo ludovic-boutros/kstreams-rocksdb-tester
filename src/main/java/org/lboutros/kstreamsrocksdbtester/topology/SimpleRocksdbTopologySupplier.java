@@ -7,7 +7,9 @@ import org.apache.kafka.streams.kstream.Consumed;
 import org.apache.kafka.streams.state.KeyValueStore;
 import org.apache.kafka.streams.state.StoreBuilder;
 import org.apache.kafka.streams.state.Stores;
+import org.apache.kafka.streams.state.internals.CustomRocksDbKeyValueBytesStoreSupplier;
 import org.lboutros.kstreamsrocksdbtester.topology.processor.BasicProcessor;
+import org.rocksdb.ReadOptions;
 
 import java.util.function.Supplier;
 
@@ -17,10 +19,12 @@ public class SimpleRocksdbTopologySupplier implements Supplier<Topology> {
     @Override
     public Topology get() {
         var builder = new StreamsBuilder();
+        ReadOptions readOptions = new ReadOptions();
+        readOptions.setAutoPrefixMode(true);
 
         final StoreBuilder<KeyValueStore<String, String>> store =
                 Stores.keyValueStoreBuilder(
-                        Stores.persistentKeyValueStore(A_STORE_NAME),
+                        new CustomRocksDbKeyValueBytesStoreSupplier(A_STORE_NAME, readOptions, 7),
                         Serdes.String(),
                         Serdes.String()
                 );
