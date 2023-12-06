@@ -15,6 +15,7 @@ import java.util.function.Supplier;
 
 public class SimpleRocksdbTopologySupplier implements Supplier<Topology> {
     public static final String A_STORE_NAME = "aStoreName";
+    public static final String DELETE_PREFIX = "DELETE#";
 
     @Override
     public Topology get() {
@@ -24,7 +25,7 @@ public class SimpleRocksdbTopologySupplier implements Supplier<Topology> {
 
         final StoreBuilder<KeyValueStore<String, String>> store =
                 Stores.keyValueStoreBuilder(
-                        new CustomRocksDbKeyValueBytesStoreSupplier(A_STORE_NAME, readOptions, 7),
+                        new CustomRocksDbKeyValueBytesStoreSupplier(A_STORE_NAME, readOptions, DELETE_PREFIX.length()),
                         Serdes.String(),
                         Serdes.String()
                 );

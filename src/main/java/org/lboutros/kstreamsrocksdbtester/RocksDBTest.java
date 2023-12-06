@@ -28,6 +28,7 @@ import java.util.concurrent.TimeUnit;
 
 import static org.lboutros.kstreamsrocksdbtester.configuration.Utils.readConfiguration;
 import static org.lboutros.kstreamsrocksdbtester.topology.SimpleRocksdbTopologySupplier.A_STORE_NAME;
+import static org.lboutros.kstreamsrocksdbtester.topology.SimpleRocksdbTopologySupplier.DELETE_PREFIX;
 
 @Slf4j
 class RocksDBTest implements Closeable {
@@ -141,7 +142,7 @@ class RocksDBTest implements Closeable {
                     long start = TIME.nanoseconds();
                     List<String> keys = new ArrayList<>();
                     try (KeyValueIterator<String, String> iterator =
-                                 stateStore.prefixScan("DELETE#", serde.serializer())) {
+                                 stateStore.prefixScan(DELETE_PREFIX, serde.serializer())) {
                         prefixScanCount++;
                         long prefixScanTime = TIME.nanoseconds() - start;
                         totalTime += prefixScanTime;
