@@ -9,17 +9,13 @@ import org.apache.kafka.common.serialization.Serde;
 import org.apache.kafka.common.serialization.Serdes;
 import org.apache.kafka.common.utils.SystemTime;
 import org.apache.kafka.common.utils.Time;
-import org.apache.kafka.streams.TopologyTestDriver;
+import org.apache.kafka.streams.ExtendedTopologyTestDriver;
 import org.apache.kafka.streams.processor.internals.metrics.StreamsMetricsImpl;
 import org.apache.kafka.streams.state.KeyValueIterator;
 import org.apache.kafka.streams.state.internals.MeteredKeyValueStore;
 import org.lboutros.kstreamsrocksdbtester.topology.SimpleRocksdbTopologySupplier;
 
 import java.io.Closeable;
-import java.lang.invoke.MethodHandles;
-import java.lang.invoke.VarHandle;
-import java.lang.reflect.Field;
-import java.lang.reflect.Modifier;
 import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.Executors;
@@ -36,13 +32,13 @@ class RocksDBTest implements Closeable {
     private static final Time TIME = new SystemTime();
 
 
-    private final TopologyTestDriver testDriver;
+    private final ExtendedTopologyTestDriver testDriver;
 
-    private MockProducer<String, String> producer;
+    private final MockProducer<byte[], byte[]> producer;
 
-    private StreamsMetricsImpl streamsMetrics;
+    private final StreamsMetricsImpl streamsMetrics;
 
-    private Metrics metrics;
+    private final Metrics metrics;
 
     private final ScheduledExecutorService rocksDBMetricsRecordingService;
 
@@ -56,7 +52,7 @@ class RocksDBTest implements Closeable {
     public RocksDBTest() throws javax.naming.ConfigurationException, ConfigurationException, IllegalAccessException, NoSuchFieldException {
         Properties streamsConfiguration = readConfiguration("test.properties");
 
-        testDriver = new TopologyTestDriver(
+        testDriver = new ExtendedTopologyTestDriver(
                 new SimpleRocksdbTopologySupplier().get(),
                 streamsConfiguration,
                 Instant.EPOCH);
@@ -71,7 +67,10 @@ class RocksDBTest implements Closeable {
 
         jmxReporter = new JmxReporter();
 
-        exposeAndGetTestDriverFields();
+        producer = testDriver.getProducer();
+        metrics = testDriver.getMetrics();
+        testDriver.setMockWallClockTime(new SystemTime());
+        streamsMetrics = testDriver.getStreamsMetrics();
 
         metrics.addReporter(jmxReporter);
 
@@ -84,31 +83,6 @@ class RocksDBTest implements Closeable {
                 recordingInterval,
                 TimeUnit.SECONDS
         );
-    }
-
-    @SuppressWarnings("unchecked")
-    private void exposeAndGetTestDriverFields() throws NoSuchFieldException, IllegalAccessException {
-        // Don't do that alone at home, this can be dangerous :p
-        Field producerPrivateField = TopologyTestDriver.class.getDeclaredField("producer");
-        producerPrivateField.setAccessible(true);
-        producer = (MockProducer<String, String>) producerPrivateField.get(testDriver);
-
-        Field streamsMetricsPrivateField = MeteredKeyValueStore.class.getDeclaredField("streamsMetrics");
-        streamsMetricsPrivateField.setAccessible(true);
-        streamsMetrics = (StreamsMetricsImpl) streamsMetricsPrivateField.get(stateStore);
-
-        Field streamMetricsPrivateField = StreamsMetricsImpl.class.getDeclaredField("metrics");
-        streamMetricsPrivateField.setAccessible(true);
-        metrics = (Metrics) streamMetricsPrivateField.get(streamsMetrics);
-
-        Field timePrivateField = TopologyTestDriver.class.getDeclaredField("mockWallClockTime");
-        timePrivateField.setAccessible(true);
-
-        var lookup = MethodHandles.privateLookupIn(Field.class, MethodHandles.lookup());
-        VarHandle modifiers = lookup.findVarHandle(Field.class, "modifiers", int.class);
-        // make field non-final
-        modifiers.set(timePrivateField, timePrivateField.getModifiers() & ~Modifier.FINAL);
-        timePrivateField.set(testDriver, new SystemTime());
     }
 
     @Override
@@ -162,6 +136,8 @@ class RocksDBTest implements Closeable {
                                             || e.getKey().name().contains("usage")
                                             || e.getKey().name().contains("block-cache")
                                             || e.getKey().name().contains("prefix")
+                                            || e.getKey().name().contains("get")
+                                            || e.getKey().name().contains("put")
                                             || e.getKey().name().contains("flush"))
                                     .forEach(e -> log.info("{}: {}", e.getKey().name(), e.getValue().metricValue()));
                             // TODO: should be configurable

@@ -5,18 +5,20 @@ import org.apache.kafka.streams.state.KeyValueBytesStoreSupplier;
 import org.apache.kafka.streams.state.KeyValueStore;
 import org.rocksdb.ReadOptions;
 
+import java.util.function.Consumer;
+
 public class CustomRocksDbKeyValueBytesStoreSupplier implements KeyValueBytesStoreSupplier {
 
     private final String name;
-    private Integer prefixSize;
-    private ReadOptions readOptions;
+    private final Consumer<ReadOptions> readOptionsConfigurer;
+    private final Integer prefixSize;
 
     public CustomRocksDbKeyValueBytesStoreSupplier(final String name,
-                                                   final ReadOptions readOptions,
+                                                   final java.util.function.Consumer<ReadOptions> readOptionsConfigurer,
                                                    final Integer prefixSize) {
         this.name = name;
+        this.readOptionsConfigurer = readOptionsConfigurer;
         this.prefixSize = prefixSize;
-        this.readOptions = readOptions;
     }
 
     @Override
@@ -26,7 +28,10 @@ public class CustomRocksDbKeyValueBytesStoreSupplier implements KeyValueBytesSto
 
     @Override
     public KeyValueStore<Bytes, byte[]> get() {
-        return new ConfigurableIteratorRocksDBStore(name, metricsScope(), readOptions, prefixSize);
+        return new ConfigurableIteratorRocksDBStore(name,
+                metricsScope(),
+                readOptionsConfigurer,
+                prefixSize);
     }
 
     @Override

@@ -27,6 +27,7 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.util.*;
+import java.util.function.Consumer;
 
 import static org.apache.kafka.streams.StreamsConfig.InternalConfig.IQ_CONSISTENCY_OFFSET_VECTOR_ENABLED;
 import static org.apache.kafka.streams.StreamsConfig.METRICS_RECORDING_LEVEL_CONFIG;
@@ -50,6 +51,7 @@ public class ConfigurableIteratorRocksDBStore implements KeyValueStore<Bytes, by
     final Set<KeyValueIterator<Bytes, byte[]>> openIterators = Collections.synchronizedSet(new HashSet<>());
     private final String parentDir;
     private final RocksDBMetricsRecorder metricsRecorder;
+    private Consumer<ReadOptions> readOptionsConfigurer;
     private Integer prefixSize;
     // VisibleForTesting
     protected File dbDir;
@@ -69,26 +71,29 @@ public class ConfigurableIteratorRocksDBStore implements KeyValueStore<Bytes, by
     private RocksDBConfigSetter configSetter;
     private boolean userSpecifiedStatistics = false;
     private OffsetCheckpoint positionCheckpoint;
-
-    private final ReadOptions readOptions;
+    private ReadOptions readOptions;
 
     // VisibleForTesting
     public ConfigurableIteratorRocksDBStore(final String name,
                                             final String metricsScope,
-                                            final ReadOptions readOptions,
+                                            final java.util.function.Consumer<ReadOptions> readOptionsConfigurer,
                                             final Integer prefixSize) {
-        this(name, DB_FILE_DIR, new RocksDBMetricsRecorder(metricsScope, name), readOptions, prefixSize);
+        this(name,
+                DB_FILE_DIR,
+                new RocksDBMetricsRecorder(metricsScope, name),
+                readOptionsConfigurer,
+                prefixSize);
     }
 
     private ConfigurableIteratorRocksDBStore(final String name,
                                              final String parentDir,
                                              final RocksDBMetricsRecorder metricsRecorder,
-                                             final ReadOptions readOptions,
+                                             final java.util.function.Consumer<ReadOptions> readOptionsConfigurer,
                                              final Integer prefixSize) {
         this.name = name;
         this.parentDir = parentDir;
         this.metricsRecorder = metricsRecorder;
-        this.readOptions = readOptions;
+        this.readOptionsConfigurer = readOptionsConfigurer;
         this.prefixSize = prefixSize;
     }
 
@@ -146,9 +151,14 @@ public class ConfigurableIteratorRocksDBStore implements KeyValueStore<Bytes, by
         filter = new BloomFilter();
         tableConfig.setFilterPolicy(filter);
 
-        if (prefixSize != null && readOptions != null && readOptions.autoPrefixMode()) {
+        readOptions = new ReadOptions();
+        // Prefix scan mgmt
+        if (prefixSize != null) {
+            readOptions.setAutoPrefixMode(true);
             userSpecifiedOptions.useCappedPrefixExtractor(prefixSize);
         }
+        // Additional ReadOptions configuration
+        readOptionsConfigurer.accept(readOptions);
         // Limit the memory used by rocksdb
         tableConfig.setCacheIndexAndFilterBlocks(true);
         tableConfig.setPinTopLevelIndexAndFilter(true);
